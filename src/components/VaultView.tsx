@@ -1,40 +1,49 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Cloud, CloudAlert, CloudOff, Layers, Lock, Plus, RefreshCw, Search, Settings, Star } from 'lucide-react'
+import { Cloud, CloudAlert, Layers, Lock, Plus, RefreshCw, Search, Settings, Star } from 'lucide-react'
 import { useVault } from '../hooks/useVault'
 import { CATEGORIES, CATEGORY_ORDER } from '../lib/categories'
 import { newEntry, type Category, type Entry } from '../lib/types'
 import { EntryDetail } from './EntryDetail'
 import { EntryEditor } from './EntryEditor'
 import { EntryList } from './EntryList'
-import { Backdrop, Logo } from './LockScreen'
+import { Backdrop, Logo, SecondFactorForm } from './LockScreen'
 import { SettingsDialog } from './SettingsDialog'
-import { Button, cx, IconButton } from './ui'
+import { Button, cx, IconButton, Modal } from './ui'
 
 type Filter = 'all' | 'favorites' | Category
 
-function SyncBadge() {
-  const { sync, syncNow } = useVault()
-  if (!sync.enabled)
-    return (
-      <span className="flex items-center gap-2 text-xs text-ink-400">
-        <CloudOff className="size-3.5" /> Local uniquement
-      </span>
-    )
+function SaveBadge() {
+  const { save, refresh } = useVault()
   const map = {
-    off: [CloudOff, 'Local'],
-    idle: [Cloud, 'Synchronisé'],
-    syncing: [RefreshCw, 'Synchronisation…'],
-    error: [CloudAlert, 'Erreur de synchro'],
+    saved: [Cloud, 'Enregistré'],
+    saving: [RefreshCw, 'Enregistrement…'],
+    error: [CloudAlert, 'Échec — réessayer'],
+    reauth: [CloudAlert, '2FA requise'],
   } as const
-  const [Icon, label] = map[sync.status]
+  const [Icon, label] = map[save.status]
   return (
     <button
-      onClick={() => void syncNow()}
-      title={sync.error ?? 'Synchroniser maintenant'}
-      className={cx('flex items-center gap-2 text-xs', sync.status === 'error' ? 'text-rose-300' : 'text-ink-300 hover:text-gold-200')}
+      onClick={() => void refresh()}
+      title={save.error ?? (save.lastSavedAt ? `Dernier enregistrement ${new Date(save.lastSavedAt).toLocaleString('fr-FR')}` : '')}
+      className={cx(
+        'flex items-center gap-2 text-xs',
+        save.status === 'error' || save.status === 'reauth' ? 'text-rose-300' : 'text-ink-300 hover:text-gold-200',
+      )}
     >
-      <Icon className={cx('size-3.5', sync.status === 'syncing' && 'animate-spin')} /> {label}
+      <Icon className={cx('size-3.5', save.status === 'saving' && 'animate-spin')} /> {label}
     </button>
+  )
+}
+
+function ReauthDialog() {
+  const vault = useVault()
+  return (
+    <Modal open onClose={vault.lock} title="Session expirée">
+      <p className="mb-5 text-sm leading-relaxed text-ink-300">
+        Ta session 2FA a expiré. Saisis un code pour continuer : tes modifications en attente seront enregistrées.
+      </p>
+      <SecondFactorForm submitLabel="Continuer" onSubmit={vault.reauth} />
+    </Modal>
   )
 }
 
@@ -129,7 +138,7 @@ export function VaultView() {
         </nav>
         <div className="flex-1" />
         <div className="space-y-3 border-t hairline px-2 pt-4">
-          <SyncBadge />
+          <SaveBadge />
           <div className="flex gap-1">
             <Button variant="ghost" className="flex-1 justify-start px-2" onClick={() => setSettingsOpen(true)}>
               <Settings className="size-4" /> Réglages
@@ -210,7 +219,7 @@ export function VaultView() {
         </div>
 
         <div className="border-t hairline px-4 py-2.5 md:hidden">
-          <SyncBadge />
+          <SaveBadge />
         </div>
         <button
           onClick={create}
@@ -253,6 +262,7 @@ export function VaultView() {
         />
       )}
       {settingsOpen && <SettingsDialog open onClose={() => setSettingsOpen(false)} />}
+      {vault.save.status === 'reauth' && <ReauthDialog />}
     </div>
   )
 }

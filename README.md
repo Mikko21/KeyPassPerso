@@ -6,40 +6,44 @@ Gestionnaire de mots de passe personnel, zero-knowledge, déployable sur Vercel.
 
 - Chiffrement **AES-256-GCM** dans le navigateur (WebCrypto, aucune lib crypto tierce).
 - Clé dérivée du mot de passe maître via **PBKDF2-SHA256, 600 000 itérations**, sel aléatoire, puis HKDF en deux sous-clés :
-  `encKey` (chiffrement, non extractible) et `authKey` (authentification auprès de l'API de sync).
-- Le mot de passe maître et les données en clair ne quittent jamais l'appareil. Le serveur ne stocke que le blob chiffré + `sha256(authKey)`.
+  `encKey` (chiffrement, non extractible) et `authKey` (authentification auprès de l'API).
+- **2FA obligatoire (TOTP)** : ouvrir le coffre exige le mot de passe maître **et** un code à 6 chiffres
+  (ou un des 10 codes de secours à usage unique). Anti-rejeu, verrouillage 15 min après 5 codes faux.
+- Le secret TOTP est stocké scellé sous une clé dérivée de `authKey` : une fuite du store Blob seule ne le révèle pas.
+- Sessions : 12 h par onglet, ou 30 jours si « faire confiance à cet appareil ». Révocables à tout moment ;
+  un changement de mot de passe maître invalide toutes les sessions des autres appareils.
+- Le serveur ne voit jamais le mot de passe maître ni les données en clair : il stocke le blob chiffré + `sha256(authKey)`.
+- Stockage : **Vercel Blob privé**, écriture atomique par ETag, **historique des 30 dernières versions**.
 - Verrouillage auto après inactivité, presse-papiers effacé automatiquement, clés uniquement en mémoire.
 - CSP stricte (`default-src 'none'`, aucun script/style tiers, polices auto-hébergées), HSTS, `frame-ancestors 'none'`, `noindex`.
-- Stockage distant : **Vercel Blob privé** (natif Vercel, aucun service tiers), écriture atomique par ETag (`ifMatch`) → 409 sur conflit.
-- API : comparaison en temps constant, throttle des échecs d'auth (10 / 15 min / IP, par instance) + règle WAF Vercel recommandée.
-- **Pas de récupération possible** si tu perds le mot de passe maître. Exporte régulièrement une sauvegarde chiffrée.
+- **Pas de récupération possible** si tu perds le mot de passe maître. La sauvegarde exportée s'ouvre avec le mot de passe seul
+  (pas de 2FA) : garde-la hors ligne.
 
 ## Fonctionnalités
 
 Entrées par catégories (identifiants, banque, crypto, Wi‑Fi, notes sécurisées…), favoris, recherche (`Ctrl/⌘+K`),
-générateur de mots de passe (CSPRNG sans biais), jauge de robustesse, codes 2FA TOTP intégrés,
-export/import de sauvegarde chiffrée, changement de mot de passe maître, synchronisation multi-appareils optionnelle,
-verrouillage `Ctrl/⌘+Maj+L`.
+générateur de mots de passe (CSPRNG sans biais), jauge de robustesse, codes 2FA TOTP des sites intégrés,
+historique et restauration de versions, export/import de sauvegarde chiffrée, changement de mot de passe maître,
+gestion 2FA (nouvelle application, nouveaux codes de secours, déconnexion de tous les appareils), verrouillage `Ctrl/⌘+Maj+L`.
 
 ## Développement
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173 (mode local uniquement, l'API /api n'est servie que via `vercel dev`)
+npm run dev        # UI seule ; l'API /api nécessite `vercel dev` (store Blob lié)
 npm test           # crypto, TOTP (vecteurs RFC 6238), merge, API
 npm run build
 ```
 
 ## Déploiement sur Vercel
 
-1. Importe le repo GitHub dans Vercel (framework détecté : Vite). Déploie. L'app fonctionne déjà en **mode local** (coffre chiffré dans le navigateur).
-2. Sync multi-appareils (optionnel) :
-   - Vercel → projet → **Storage** → Create → **Blob**, accès **Private**, région `fra1` / `cdg1` → Connect au projet. `BLOB_READ_WRITE_TOKEN` est injecté.
-   - Ajoute `KPP_SETUP_TOKEN` (ex. `openssl rand -base64 32`) dans Settings → Environment Variables (Production), puis redéploie.
-   - Dans l'app : Réglages → Synchronisation → mot de passe maître + jeton → Activer.
-   - Sur un autre appareil : écran d'accueil → **Depuis le cloud**.
-   - Firewall → Add rule → *Rate limit* : path `/api/vault`, 30 requêtes / 60 s / IP → Deny.
-3. Recommandé : protège le déploiement (Vercel Deployment Protection / domaine perso) et active la 2FA sur ton compte Vercel et GitHub.
+1. Importe le repo dans Vercel (framework détecté : Vite).
+2. Projet → **Storage** → Create → **Blob**, accès **Private**, région Paris (`cdg1`) → Connect au projet
+   (`BLOB_STORE_ID` est injecté, auth OIDC).
+3. Settings → Environment Variables : `KPP_SETUP_TOKEN` (ex. `openssl rand -base64 32`), puis redéploie.
+4. Ouvre le site : mot de passe maître + jeton → scan du QR code 2FA → sauvegarde des codes de secours.
+5. Autres appareils : même URL → mot de passe maître → code 2FA.
+6. Recommandé : Firewall → *Rate limit* sur `/api/vault`, 30 requêtes / 60 s / IP → Deny.
 
 ## Format du coffre
 
