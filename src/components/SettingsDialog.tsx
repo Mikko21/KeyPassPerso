@@ -149,15 +149,20 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
         ) : (
           <form onSubmit={enableSync} className="space-y-4">
             <p className="text-sm leading-relaxed text-ink-300">
-              Synchronise ton coffre entre appareils via ton propre déploiement. Pour le premier appareil, renseigne le jeton{' '}
-              <code className="rounded bg-white/5 px-1 font-mono text-gold-200">KPP_SETUP_TOKEN</code> défini dans Vercel.
+              Sauvegarde une copie chiffrée de ton coffre sur ce site pour le retrouver sur ton téléphone, un autre PC ou un autre
+              navigateur (bouton « Depuis le cloud »). Chaque modification est envoyée automatiquement.
+              <span className="mt-2 block text-ink-400">
+                Première activation uniquement : renseigne le jeton{' '}
+                <code className="rounded bg-white/5 px-1 font-mono text-gold-200">KPP_SETUP_TOKEN</code>. Les appareils suivants
+                n’en ont pas besoin.
+              </span>
             </p>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Mot de passe maître">
                 <PasswordInput value={syncPw} onChange={(e) => setSyncPw(e.target.value)} autoComplete="current-password" />
               </Field>
               <Field label="Jeton d’initialisation">
-                <Input value={setupToken} onChange={(e) => setSetupToken(e.target.value)} placeholder="si premier appareil" autoComplete="off" className="font-mono text-sm" />
+                <Input value={setupToken} onChange={(e) => setSetupToken(e.target.value)} placeholder="première activation" autoComplete="off" className="font-mono text-sm" />
               </Field>
             </div>
             {syncErr && <p className="text-sm text-rose-300">{syncErr}</p>}
