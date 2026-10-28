@@ -1,0 +1,87 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource/instrument-serif/400.css';
+@import '@fontsource/instrument-serif/400-italic.css';
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Instrument Serif', ui-serif, Georgia, serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+
+  --color-ink-950: #08080a;
+  --color-ink-900: #0e0e11;
+  --color-ink-850: #131317;
+  --color-ink-800: #18181d;
+  --color-ink-700: #23232a;
+  --color-ink-600: #2f2f38;
+  --color-ink-400: #6b6b78;
+  --color-ink-300: #9a9aa6;
+  --color-ink-200: #c9c9d1;
+  --color-ink-100: #ececf0;
+
+  --color-gold-100: #f8efd9;
+  --color-gold-200: #f1dfb2;
+  --color-gold-300: #e3c788;
+  --color-gold-400: #cfa865;
+  --color-gold-500: #b38a4c;
+  --color-gold-600: #8c6a36;
+
+  --animate-fade-in: fade-in 0.35s ease-out both;
+  --animate-rise: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-drift: drift 22s ease-in-out infinite alternate;
+
+  @keyframes fade-in {
+    from { opacity: 0 }
+    to { opacity: 1 }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px) scale(0.99) }
+    to { opacity: 1; transform: none }
+  }
+  @keyframes drift {
+    from { transform: translate3d(-4%, -2%, 0) scale(1) }
+    to { transform: translate3d(4%, 3%, 0) scale(1.08) }
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-ink-950 text-ink-100 font-sans antialiased;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--color-gold-400) 35%, transparent);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-ink-600) transparent;
+  }
+}
+
+@utility text-gold-gradient {
+  background: linear-gradient(120deg, var(--color-gold-100), var(--color-gold-300) 45%, var(--color-gold-500));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility glass {
+  background: color-mix(in oklab, var(--color-ink-850) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid color-mix(in oklab, white 7%, transparent);
+}
+
+@utility hairline {
+  border-color: color-mix(in oklab, white 6%, transparent);
+}
+
+@utility noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+}
