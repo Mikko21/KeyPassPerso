@@ -1,15 +1,16 @@
-// Vercel Function: stores the single encrypted vault in Upstash Redis (REST API, no SDK).
+// Vercel Function: stores the single encrypted vault in a private Vercel Blob store.
 // The server never sees the master password or plaintext: only ciphertext + sha256(authKey).
 //
 // Env vars:
-//   KV_REST_API_URL / KV_REST_API_TOKEN   (or UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN)
-//   KPP_SETUP_TOKEN                       one-time secret required to create the remote vault
+//   BLOB_READ_WRITE_TOKEN   injected when a private Blob store is connected to the project
+//   KPP_SETUP_TOKEN         one-time secret required to create the remote vault
 
 import { createHash, timingSafeEqual } from 'node:crypto'
+import { BlobPreconditionFailedError, get, put } from '@vercel/blob'
 
-const RECORD_KEY = 'kpp:vault'
+const BLOB_PATH = 'kpp/vault.json'
 const MAX_FAILS = 10
-const FAIL_WINDOW_S = 15 * 60
+const FAIL_WINDOW_MS = 15 * 60 * 1000
 const MAX_BODY_BYTES = 5 * 1024 * 1024
 
 interface Envelope {
@@ -27,19 +28,51 @@ interface StoredRecord {
   authHash: string
 }
 
-const REDIS_URL = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL
-const REDIS_TOKEN = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN
+async function loadRecord(): Promise<{ record: StoredRecord; etag: string } | null> {
+  // useCache:false reads from origin so a fresh write (e.g. rotated auth hash) is never served stale.
+  const res = await get(BLOB_PATH, { access: 'private', useCache: false })
+  if (!res || res.statusCode !== 200 || !res.stream) return null
+  const text = await new Response(res.stream).text()
+  return { record: JSON.parse(text) as StoredRecord, etag: res.blob.etag }
+}
 
-async function redis<T = unknown>(...command: (string | number)[]): Promise<T> {
-  const res = await fetch(REDIS_URL!, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(command),
-    cache: 'no-store',
-  })
-  const body = (await res.json()) as { result?: T; error?: string }
-  if (!res.ok || body.error) throw new Error(`Redis: ${body.error ?? res.status}`)
-  return body.result as T
+/** Atomic compare-and-swap: create-only when etag is null, otherwise ifMatch. Returns false on conflict. */
+async function saveRecord(record: StoredRecord, etag: string | null): Promise<boolean> {
+  try {
+    await put(BLOB_PATH, JSON.stringify(record), {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      cacheControlMaxAge: 60,
+      ...(etag ? { ifMatch: etag } : { allowOverwrite: false }),
+    })
+    return true
+  } catch (err) {
+    if (err instanceof BlobPreconditionFailedError) return false
+    // Create-only put on an existing pathname also means someone else won the race.
+    if (!etag && err instanceof Error && /already exists/i.test(err.message)) return false
+    throw err
+  }
+}
+
+// Best-effort, per-instance brute-force throttle. Pair it with a Vercel WAF rate-limit rule
+// on /api/vault for a global limit (see README).
+const fails = new Map<string, { n: number; until: number }>()
+
+function isRateLimited(ip: string): boolean {
+  const f = fails.get(ip)
+  if (!f) return false
+  if (Date.now() > f.until) {
+    fails.delete(ip)
+    return false
+  }
+  return f.n >= MAX_FAILS
+}
+
+function recordFailure(ip: string): void {
+  const f = fails.get(ip)
+  if (!f || Date.now() > f.until) fails.set(ip, { n: 1, until: Date.now() + FAIL_WINDOW_MS })
+  else f.n++
 }
 
 function json(data: unknown, status = 200): Response {
@@ -86,40 +119,26 @@ function isEnvelope(x: unknown): x is Envelope {
   )
 }
 
-async function loadRecord(): Promise<StoredRecord | null> {
-  const raw = await redis<string | null>('GET', RECORD_KEY)
-  return raw ? (JSON.parse(raw) as StoredRecord) : null
-}
-
-async function isRateLimited(ip: string): Promise<boolean> {
-  const n = Number((await redis<string | null>('GET', `kpp:fail:${ip}`)) ?? 0)
-  return n >= MAX_FAILS
-}
-
-async function recordFailure(ip: string): Promise<void> {
-  const n = await redis<number>('INCR', `kpp:fail:${ip}`)
-  if (n === 1) await redis('EXPIRE', `kpp:fail:${ip}`, FAIL_WINDOW_S)
-}
-
-async function authenticate(req: Request, record: StoredRecord, ip: string): Promise<Response | null> {
-  if (await isRateLimited(ip)) return json({ error: 'Trop de tentatives, réessaie dans 15 minutes' }, 429)
+function authenticate(req: Request, record: StoredRecord, ip: string): Response | null {
+  if (isRateLimited(ip)) return json({ error: 'Trop de tentatives, réessaie dans 15 minutes' }, 429)
   const key = bearer(req)
   if (!key || !safeEqual(sha256(key), record.authHash)) {
-    await recordFailure(ip)
+    recordFailure(ip)
     return json({ error: 'Mot de passe maître incorrect pour le coffre distant' }, 401)
   }
   return null
 }
 
 async function handleGet(req: Request): Promise<Response> {
-  const record = await loadRecord()
-  if (!record) return json({ error: 'Aucun coffre distant' }, 404)
+  const loaded = await loadRecord()
+  if (!loaded) return json({ error: 'Aucun coffre distant' }, 404)
+  const { record } = loaded
 
   // Salt + iterations are not secret; a new device needs them to derive its keys.
   if (new URL(req.url).searchParams.has('params')) {
     return json({ kdf: record.envelope.kdf, rev: record.envelope.rev })
   }
-  const denied = await authenticate(req, record, clientIp(req))
+  const denied = authenticate(req, record, clientIp(req))
   if (denied) return denied
   return json({ envelope: record.envelope })
 }
@@ -139,23 +158,24 @@ async function handlePut(req: Request): Promise<Response> {
     return json({ error: 'Requête invalide' }, 400)
   }
   const baseRev = body.baseRev as number
-  const record = await loadRecord()
+  const loaded = await loadRecord()
+  const record = loaded?.record
 
   let authHash: string
   if (!record) {
     // First upload: protected by the deployment-level setup token.
     const setup = process.env.KPP_SETUP_TOKEN
     if (!setup) return json({ error: 'KPP_SETUP_TOKEN non configuré sur Vercel' }, 503)
-    if (await isRateLimited(ip)) return json({ error: 'Trop de tentatives, réessaie dans 15 minutes' }, 429)
+    if (isRateLimited(ip)) return json({ error: 'Trop de tentatives, réessaie dans 15 minutes' }, 429)
     if (typeof body.setupToken !== 'string' || !safeEqual(sha256(body.setupToken), sha256(setup))) {
-      await recordFailure(ip)
+      recordFailure(ip)
       return json({ error: 'Jeton d’initialisation invalide' }, 401)
     }
     const key = bearer(req)
     if (!key) return json({ error: 'Clé d’authentification manquante' }, 400)
     authHash = sha256(key)
   } else {
-    const denied = await authenticate(req, record, ip)
+    const denied = authenticate(req, record, ip)
     if (denied) return denied
     if (record.envelope.rev !== baseRev) {
       return json({ error: 'Conflit de version', envelope: record.envelope }, 409)
@@ -171,13 +191,18 @@ async function handlePut(req: Request): Promise<Response> {
 
   const rev = (record?.envelope.rev ?? 0) + 1
   const envelope: Envelope = { ...body.envelope, rev, updatedAt: Date.now() }
-  await redis('SET', RECORD_KEY, JSON.stringify({ envelope, authHash } satisfies StoredRecord))
+  if (!(await saveRecord({ envelope, authHash }, loaded?.etag ?? null))) {
+    const latest = await loadRecord()
+    return json({ error: 'Conflit de version', envelope: latest?.record.envelope }, 409)
+  }
   return json({ rev })
 }
 
 export default {
   async fetch(req: Request): Promise<Response> {
-    if (!REDIS_URL || !REDIS_TOKEN) return json({ error: 'Stockage distant non configuré' }, 503)
+    if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) {
+      return json({ error: 'Stockage Blob non configuré' }, 503)
+    }
     try {
       if (req.method === 'GET') return await handleGet(req)
       if (req.method === 'PUT') return await handlePut(req)

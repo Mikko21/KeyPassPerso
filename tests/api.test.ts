@@ -1,19 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// In-memory fake of the Upstash REST API.
-const store = new Map<string, string>()
-const realFetch = globalThis.fetch
-vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
-  if (!String(url).startsWith('https://redis.test')) return realFetch(url, init)
-  const [cmd, key, val] = JSON.parse(String(init.body)) as string[]
-  let result: unknown = 'OK'
-  if (cmd === 'GET') result = store.get(key) ?? null
-  else if (cmd === 'SET') store.set(key, val)
-  else if (cmd === 'INCR') store.set(key, String(Number(store.get(key) ?? 0) + 1)), (result = Number(store.get(key)))
-  return new Response(JSON.stringify({ result }))
+// In-memory fake of the private Vercel Blob store with ETag compare-and-swap.
+const store = new Map<string, { body: string; etag: string }>()
+let etagSeq = 0
+vi.mock('@vercel/blob', () => {
+  class BlobPreconditionFailedError extends Error {}
+  return {
+    BlobPreconditionFailedError,
+    get: async (path: string) => {
+      const item = store.get(path)
+      if (!item) return null
+      return { statusCode: 200, stream: new Response(item.body).body, blob: { etag: item.etag } }
+    },
+    put: async (path: string, body: string, opts: { ifMatch?: string; allowOverwrite?: boolean }) => {
+      const cur = store.get(path)
+      if (opts.ifMatch && cur?.etag !== opts.ifMatch) throw new BlobPreconditionFailedError()
+      if (!opts.ifMatch && cur && !opts.allowOverwrite) throw new Error('This blob already exists')
+      store.set(path, { body, etag: `"${++etagSeq}"` })
+      return {}
+    },
+  }
 })
-process.env.KV_REST_API_URL = 'https://redis.test'
-process.env.KV_REST_API_TOKEN = 't'
+process.env.BLOB_READ_WRITE_TOKEN = 't'
 process.env.KPP_SETUP_TOKEN = 'setup-secret'
 
 const { default: handler } = await import('../api/vault')
@@ -55,6 +63,7 @@ describe('api/vault', () => {
   })
 
   it('rate-limits after repeated failures', async () => {
+    store.clear()
     await req('PUT', A, { envelope: env(), baseRev: 0, setupToken: 'setup-secret' })
     for (let i = 0; i < 10; i++) await req('GET', B)
     expect((await req('GET', A)).status).toBe(429)

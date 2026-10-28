@@ -10,7 +10,8 @@ Gestionnaire de mots de passe personnel, zero-knowledge, déployable sur Vercel.
 - Le mot de passe maître et les données en clair ne quittent jamais l'appareil. Le serveur ne stocke que le blob chiffré + `sha256(authKey)`.
 - Verrouillage auto après inactivité, presse-papiers effacé automatiquement, clés uniquement en mémoire.
 - CSP stricte (`default-src 'none'`, aucun script/style tiers, polices auto-hébergées), HSTS, `frame-ancestors 'none'`, `noindex`.
-- API : comparaison en temps constant, rate-limit (10 échecs / 15 min / IP), contrôle de version optimiste (409 sur conflit).
+- Stockage distant : **Vercel Blob privé** (natif Vercel, aucun service tiers), écriture atomique par ETag (`ifMatch`) → 409 sur conflit.
+- API : comparaison en temps constant, throttle des échecs d'auth (10 / 15 min / IP, par instance) + règle WAF Vercel recommandée.
 - **Pas de récupération possible** si tu perds le mot de passe maître. Exporte régulièrement une sauvegarde chiffrée.
 
 ## Fonctionnalités
@@ -33,10 +34,11 @@ npm run build
 
 1. Importe le repo GitHub dans Vercel (framework détecté : Vite). Déploie. L'app fonctionne déjà en **mode local** (coffre chiffré dans le navigateur).
 2. Sync multi-appareils (optionnel) :
-   - Vercel → Storage / Marketplace → **Upstash Redis** (offre gratuite) → connecte-le au projet. Les variables `KV_REST_API_URL` / `KV_REST_API_TOKEN` sont injectées.
-   - Ajoute `KPP_SETUP_TOKEN` (ex. `openssl rand -base64 32`) dans Settings → Environment Variables, puis redéploie.
+   - Vercel → projet → **Storage** → Create → **Blob**, accès **Private**, région `fra1` / `cdg1` → Connect au projet. `BLOB_READ_WRITE_TOKEN` est injecté.
+   - Ajoute `KPP_SETUP_TOKEN` (ex. `openssl rand -base64 32`) dans Settings → Environment Variables (Production), puis redéploie.
    - Dans l'app : Réglages → Synchronisation → mot de passe maître + jeton → Activer.
    - Sur un autre appareil : écran d'accueil → **Depuis le cloud**.
+   - Firewall → Add rule → *Rate limit* : path `/api/vault`, 30 requêtes / 60 s / IP → Deny.
 3. Recommandé : protège le déploiement (Vercel Deployment Protection / domaine perso) et active la 2FA sur ton compte Vercel et GitHub.
 
 ## Format du coffre
