@@ -25,7 +25,8 @@ export function Logo({ className = 'size-10' }: { className?: string }) {
   return (
     <svg viewBox="0 0 64 64" className={className} aria-hidden>
       <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+        {/* userSpaceOnUse: an objectBoundingBox gradient is invisible on the zero-width keyhole stem */}
+        <linearGradient id={id} gradientUnits="userSpaceOnUse" x1="14" y1="8" x2="50" y2="53">
           <stop offset="0" stopColor="#f8efd9" />
           <stop offset="1" stopColor="#b38a4c" />
         </linearGradient>

@@ -218,7 +218,7 @@ export function VaultView() {
           )}
         </div>
 
-        <div className="border-t hairline px-4 py-2.5 md:hidden">
+        <div className="border-t hairline px-4 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] md:hidden">
           <SaveBadge />
         </div>
         <button
