@@ -7,12 +7,19 @@ const store = new Map<string, { body: string; etag: string; at: Date }>()
 let etagSeq = 0
 vi.mock('@vercel/blob', () => {
   class BlobPreconditionFailedError extends Error {}
+  class BlobNotFoundError extends Error {}
   return {
     BlobPreconditionFailedError,
+    BlobNotFoundError,
+    head: async (path: string) => {
+      const item = store.get(path)
+      if (!item) throw new BlobNotFoundError()
+      return { etag: item.etag }
+    },
     get: async (path: string) => {
       const item = store.get(path)
       if (!item) return null
-      return { statusCode: 200, stream: new Response(item.body).body, blob: { etag: item.etag } }
+      return { statusCode: 200, stream: new Response(item.body).body, blob: { etag: `W/${item.etag}-cdn` } }
     },
     put: async (path: string, body: string, opts: { ifMatch?: string; allowOverwrite?: boolean }) => {
       const cur = store.get(path)

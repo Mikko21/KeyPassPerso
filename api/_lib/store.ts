@@ -1,6 +1,6 @@
 // Private Vercel Blob persistence: the vault record plus a rolling history of previous envelopes.
 
-import { BlobPreconditionFailedError, del, get, list, put } from '@vercel/blob'
+import { BlobNotFoundError, BlobPreconditionFailedError, del, get, head, list, put } from '@vercel/blob'
 import type { Sealed } from './security.js'
 
 const RECORD_PATH = 'kpp/vault.json'
@@ -30,10 +30,20 @@ export interface StoredRecord {
 }
 
 async function readJson<T>(path: string): Promise<{ value: T; etag: string } | null> {
+  // The ETag used for conditional writes must come from head() (store metadata), not from the
+  // delivery response of get(). head() runs first: if a write lands in between, our ETag is stale
+  // and the later ifMatch write fails safely instead of overwriting newer data.
+  let etag: string
+  try {
+    etag = (await head(path)).etag
+  } catch (err) {
+    if (err instanceof BlobNotFoundError) return null
+    throw err
+  }
   // useCache:false reads from origin so a fresh write (e.g. rotated auth hash) is never served stale.
   const res = await get(path, { access: 'private', useCache: false })
   if (!res || res.statusCode !== 200 || !res.stream) return null
-  return { value: JSON.parse(await new Response(res.stream).text()) as T, etag: res.blob.etag }
+  return { value: JSON.parse(await new Response(res.stream).text()) as T, etag }
 }
 
 export function loadRecord() {
@@ -52,7 +62,10 @@ export async function saveRecord(record: StoredRecord, etag: string | null): Pro
     })
     return true
   } catch (err) {
-    if (err instanceof BlobPreconditionFailedError) return false
+    if (err instanceof BlobPreconditionFailedError) {
+      console.warn('blob CAS conflict', { path: RECORD_PATH, etag })
+      return false
+    }
     if (!etag && err instanceof Error && /already exists/i.test(err.message)) return false
     throw err
   }
