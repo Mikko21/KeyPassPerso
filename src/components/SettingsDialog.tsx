@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Download, FileUp, History, KeyRound, Loader2, LogOut, MonitorSmartphone, RefreshCw, ShieldCheck, Smartphone, Timer } from 'lucide-react'
+import { Bot, Download, FileUp, History, KeyRound, Loader2, LogOut, MonitorSmartphone, RefreshCw, ShieldCheck, Smartphone, Timer } from 'lucide-react'
 import { useVault } from '../hooks/useVault'
 import { estimateStrength } from '../lib/generator'
 import { generateRecoveryCodes, generateTotpSecret } from '../lib/mfa'
+import { AgentsDialog } from './AgentsDialog'
 import { HistoryDialog } from './HistoryDialog'
 import { CodeInput, RecoveryCodes, TotpEnroll } from './mfa'
 import { useToast } from './Toast'
@@ -115,7 +116,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
   const vault = useVault()
   const toast = useToast()
   const settings = vault.data!.settings
-  const [sub, setSub] = useState<'totp' | 'recovery' | 'history' | null>(null)
+  const [sub, setSub] = useState<'totp' | 'recovery' | 'history' | 'agents' | null>(null)
 
   // Pull fresh server state (e.g. recovery codes used on another device) when settings open.
   const { refresh } = vault
@@ -277,6 +278,15 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </form>
         </Section>
 
+        <Section icon={<Bot className="size-4" />} title="Accès agents (IA)">
+          <p className="mb-4 text-sm leading-relaxed text-ink-300">
+            Laisse une routine IA se connecter à certains sites avec tes identifiants, sans jamais les voir. {vault.data?.agents?.length ? `${vault.data.agents.length} accès actif(s).` : ''}
+          </p>
+          <Button onClick={() => setSub('agents')}>
+            <Bot className="size-4" /> Gérer les accès agents
+          </Button>
+        </Section>
+
         <Section icon={<History className="size-4" />} title="Historique">
           <p className="mb-4 text-sm leading-relaxed text-ink-300">Les 30 dernières versions du coffre sont conservées (chiffrées) sur ton serveur.</p>
           <Button onClick={() => setSub('history')}>
@@ -316,6 +326,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
       {sub === 'totp' && <ReconfigureTotp onClose={() => setSub(null)} />}
       {sub === 'recovery' && <RegenerateRecovery onClose={() => setSub(null)} />}
       {sub === 'history' && <HistoryDialog onClose={() => setSub(null)} />}
+      {sub === 'agents' && <AgentsDialog onClose={() => setSub(null)} />}
     </>
   )
 }

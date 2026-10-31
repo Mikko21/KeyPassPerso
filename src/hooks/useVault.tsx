@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ApiError, api } from '../lib/api'
+import { ApiError, api, type AgentLogEvent } from '../lib/api'
+import { buildGrant, generateAgentToken, grantSignature } from '../lib/agents'
 import { decryptVault, deriveKeys, encryptVault, newKdfParams, type KdfParams, type SessionKeys, type VaultEnvelope } from '../lib/crypto'
 import { mergeVaults } from '../lib/merge'
 import { hashRecoveryCode } from '../lib/mfa'
 import { clearLegacy, downloadBackup, loadLegacyEnvelope, readBackupFile, sessionStore } from '../lib/storage'
-import { DEFAULT_SETTINGS, emptyVault, type Entry, type Settings, type VaultData } from '../lib/types'
+import { DEFAULT_SETTINGS, emptyVault, type AgentAccess, type Entry, type Settings, type VaultData } from '../lib/types'
 
 type Status = 'loading' | 'unreachable' | 'setup' | 'locked' | 'mfa' | 'unlocked'
 type SaveStatus = 'saved' | 'saving' | 'error' | 'reauth'
@@ -61,6 +62,9 @@ interface VaultApi {
   revokeSessions(): Promise<void>
   forgetDevice(): void
   listHistory(): Promise<{ rev: number; at: number; size: number }[]>
+  saveAgent(input: { id?: string; name: string; entryIds: string[]; expiresAt: number | null }): Promise<string | null>
+  revokeAgent(id: string): Promise<void>
+  agentLog(): Promise<AgentLogEvent[]>
   openVersion(rev: number, oldPassword?: string): Promise<VaultData>
   restore(data: VaultData): void
   exportBackup(): Promise<void>
@@ -72,6 +76,7 @@ const VaultContext = createContext<VaultApi | null>(null)
 function normalize(data: VaultData): VaultData {
   return {
     entries: data.entries ?? [],
+    agents: data.agents ?? [],
     deleted: data.deleted ?? {},
     settings: { ...DEFAULT_SETTINGS, ...data.settings },
   }
@@ -100,6 +105,8 @@ export function VaultProvider({ children }: { children: ReactNode }) {
   const dirtyRef = useRef(false)
   const savingRef = useRef(false)
   const timerRef = useRef<number | undefined>(undefined)
+  // Last grant signature pushed per agent, to re-seal shared entries only when they change.
+  const grantSigRef = useRef(new Map<string, string>())
 
   const commitData = useCallback((d: VaultData) => {
     dataRef.current = d
@@ -135,13 +142,31 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       sessionRef.current = session
       revRef.current = env.rev
       dirtyRef.current = false
-      commitData(normalize(d))
+      const opened = normalize(d)
+      grantSigRef.current = new Map((opened.agents ?? []).map((a) => [a.id, grantSignature(a, opened.entries)]))
+      commitData(opened)
       setSaveState({ status: 'saved', error: null, lastSavedAt: env.updatedAt })
       setTrusted(sessionStore.isTrusted())
       setStatus('unlocked')
     },
     [commitData],
   )
+
+  /** Re-seals the credentials shared with agents whose entries changed since the last push. */
+  const syncGrants = useCallback(async (authKey: string, session: string) => {
+    const d = dataRef.current
+    if (!d) return
+    for (const a of d.agents ?? []) {
+      const sig = grantSignature(a, d.entries)
+      if (grantSigRef.current.get(a.id) === sig) continue
+      try {
+        await api.agentSave(authKey, session, await buildGrant(a, d.entries))
+        grantSigRef.current.set(a.id, sig)
+      } catch (err) {
+        console.error('agent grant sync failed', err)
+      }
+    }
+  }, [])
 
   /** Pushes local changes; on version conflict, merges the remote vault and retries. */
   const flush = useCallback(async (): Promise<void> => {
@@ -183,13 +208,14 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       }
       if (!succeeded) throw new Error('Conflit de synchronisation persistant')
       setSaveState({ status: 'saved', error: null, lastSavedAt: Date.now() })
+      void syncGrants(keys.authKey, session)
     } catch (err) {
       setSaveState((s) => ({ ...s, status: 'error', error: message(err, 'Échec de l’enregistrement') }))
     } finally {
       savingRef.current = false
       if (succeeded && dirtyRef.current) timerRef.current = window.setTimeout(() => void flush(), 300)
     }
-  }, [commitData])
+  }, [commitData, syncGrants])
 
   const scheduleFlush = useCallback(() => {
     window.clearTimeout(timerRef.current)
@@ -436,6 +462,29 @@ export function VaultProvider({ children }: { children: ReactNode }) {
       forgetDevice: () => {
         sessionStore.forgetTrusted()
         setTrusted(false)
+      },
+      saveAgent: async (input) => {
+        const { keys, session } = requireSession()
+        const d = dataRef.current!
+        const now = Date.now()
+        const existing = (d.agents ?? []).find((a) => a.id === input.id)
+        const access: AgentAccess = existing
+          ? { ...existing, name: input.name, entryIds: input.entryIds, expiresAt: input.expiresAt, updatedAt: now }
+          : { id: crypto.randomUUID(), name: input.name, token: generateAgentToken(), entryIds: input.entryIds, expiresAt: input.expiresAt, createdAt: now, updatedAt: now }
+        await api.agentSave(keys.authKey, session, await buildGrant(access, d.entries))
+        grantSigRef.current.set(access.id, grantSignature(access, d.entries))
+        mutate((v) => ({ ...v, agents: [...(v.agents ?? []).filter((a) => a.id !== access.id), access] }))
+        return existing ? null : access.token
+      },
+      revokeAgent: async (id) => {
+        const { keys, session } = requireSession()
+        await api.agentRevoke(keys.authKey, session, id)
+        grantSigRef.current.delete(id)
+        mutate((v) => ({ ...v, agents: (v.agents ?? []).filter((a) => a.id !== id), deleted: { ...v.deleted, [id]: Date.now() } }))
+      },
+      agentLog: async () => {
+        const { keys, session } = requireSession()
+        return (await api.agents(keys.authKey, session)).log
       },
       listHistory: async () => {
         const { keys, session } = requireSession()

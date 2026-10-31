@@ -16,6 +16,17 @@ export class ApiError extends Error {
   }
 }
 
+export interface AgentLogEvent {
+  at: number
+  agentId: string
+  agentName: string
+  tool: string
+  entry?: string
+  url?: string
+  ok: boolean
+  detail?: string
+}
+
 export interface Session {
   token: string
   expiresAt: number
@@ -79,6 +90,15 @@ export const api = {
 
   history: (authKey: string, session: string) =>
     call<{ versions: { rev: number; at: number; size: number }[] }>({ method: 'GET', action: 'history', authKey, session }),
+
+  agents: (authKey: string, session: string) =>
+    call<{ agents: { id: string; name: string; entries: string[] }[]; log: AgentLogEvent[] }>({ method: 'GET', action: 'agents', authKey, session }),
+
+  agentSave: (authKey: string, session: string, agent: unknown) =>
+    call<{ ok: true }>({ method: 'POST', action: 'agent-save', authKey, session, body: { agent } }),
+
+  agentRevoke: (authKey: string, session: string, id: string) =>
+    call<{ ok: true }>({ method: 'POST', action: 'agent-revoke', authKey, session, body: { id } }),
 
   version: (authKey: string, session: string, rev: number) =>
     call<{ envelope: VaultEnvelope }>({ method: 'GET', action: 'version', query: { rev: String(rev) }, authKey, session }),

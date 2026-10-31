@@ -26,6 +26,21 @@ générateur de mots de passe (CSPRNG sans biais), jauge de robustesse, codes 2F
 historique et restauration de versions, export/import de sauvegarde chiffrée, changement de mot de passe maître,
 gestion 2FA (nouvelle application, nouveaux codes de secours, déconnexion de tous les appareils), verrouillage `Ctrl/⌘+Maj+L`.
 
+## Accès agents (routines IA)
+
+Permet à une routine IA (tâche planifiée claude.ai, agent…) de se connecter à certains sites avec tes identifiants
+**sans jamais les recevoir**.
+
+- Dans l'app : Réglages → Accès agents → Nouvel accès. Tu choisis les entrées, l'expiration ; l'app génère une clé `kpa_…`
+  (affichée une fois) et rechiffre uniquement ces entrées sous une clé dérivée de ce jeton. Le serveur ne stocke que
+  `sha256(jeton)` et le chiffré.
+- Dans claude.ai : connecteur personnalisé, URL `https://<ton-domaine>/api/mcp`, en-tête `Authorization: Bearer kpa_…`.
+- Outils MCP : `list_logins`, `site_login`, `site_get`, `site_submit`. La connexion, les cookies et le mot de passe restent
+  côté serveur ; l'agent reçoit le texte, les formulaires et les liens des pages (mot de passe masqué s'il réapparaît).
+- Limité aux domaines des entrées partagées, https uniquement, sessions de 30 min, journal d'utilisation, révocation immédiate.
+- Fonctionne avec les sites à formulaires classiques (ex. Active-Court / CK Sportcenter). Les connexions purement JavaScript,
+  CAPTCHA ou SMS ne sont pas prises en charge.
+
 ## Développement
 
 ```bash

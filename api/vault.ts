@@ -29,6 +29,7 @@ import {
   verifySession,
   verifyTotp,
 } from './_lib/security.js'
+import { loadGrants, loadLog, updateGrants, type AgentGrant } from './_lib/agents.js'
 import { archive, listHistory, loadRecord, loadVersion, saveRecord, type Envelope, type StoredRecord } from './_lib/store.js'
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024
@@ -314,6 +315,59 @@ async function version(req: Request, rev: number): Promise<Response> {
   return envelope ? json({ envelope }) : fail(404, 'not_found', 'Version introuvable')
 }
 
+// ---------- Agent access management (owner only: password + second factor) ----------
+
+function isGrant(x: unknown): x is AgentGrant {
+  const g = x as AgentGrant
+  return (
+    !!g &&
+    typeof g.id === 'string' &&
+    typeof g.name === 'string' &&
+    /^[0-9a-f]{64}$/.test(g.tokenHash ?? '') &&
+    (g.expiresAt === null || Number.isFinite(g.expiresAt)) &&
+    Array.isArray(g.entries) &&
+    g.entries.length <= 200 &&
+    g.entries.every((e) => typeof e.entryId === 'string' && typeof e.title === 'string' && /^[a-z0-9.-]+$/.test(e.host ?? '') && typeof e.sealed?.ct === 'string')
+  )
+}
+
+async function agents(req: Request): Promise<Response> {
+  const ctx = await authenticate(req, true)
+  if (ctx instanceof Response) return ctx
+  const [{ agents: list }, log] = await Promise.all([loadGrants(), loadLog()])
+  return json({
+    agents: list.map((a) => ({ id: a.id, name: a.name, createdAt: a.createdAt, expiresAt: a.expiresAt, entries: a.entries.map((e) => e.entryId) })),
+    log: log.slice(0, 100),
+  })
+}
+
+async function agentSave(req: Request): Promise<Response> {
+  const ctx = await authenticate(req, true)
+  if (ctx instanceof Response) return ctx
+  const body = await readBody(req)
+  const grant = body?.agent
+  if (!isGrant(grant)) return fail(400, 'invalid', 'Accès agent invalide')
+  const clean: AgentGrant = {
+    id: grant.id,
+    name: grant.name.slice(0, 60),
+    tokenHash: grant.tokenHash,
+    createdAt: grant.createdAt || Date.now(),
+    expiresAt: grant.expiresAt,
+    entries: grant.entries.map((e) => ({ entryId: e.entryId, title: e.title.slice(0, 120), host: e.host, sealed: { iv: e.sealed.iv, ct: e.sealed.ct } })),
+  }
+  await updateGrants((list) => [...list.filter((a) => a.id !== clean.id), clean])
+  return json({ ok: true })
+}
+
+async function agentRevoke(req: Request): Promise<Response> {
+  const ctx = await authenticate(req, true)
+  if (ctx instanceof Response) return ctx
+  const body = await readBody(req)
+  const id = typeof body?.id === 'string' ? body.id : ''
+  await updateGrants((list) => list.filter((a) => a.id !== id))
+  return json({ ok: true })
+}
+
 export default {
   async fetch(req: Request): Promise<Response> {
     if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) {
@@ -339,6 +393,12 @@ export default {
           return await revoke(req)
         case 'GET history':
           return await history(req)
+        case 'GET agents':
+          return await agents(req)
+        case 'POST agent-save':
+          return await agentSave(req)
+        case 'POST agent-revoke':
+          return await agentRevoke(req)
         case 'GET version':
           return await version(req, Number(url.searchParams.get('rev')))
         default:

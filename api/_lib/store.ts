@@ -29,7 +29,7 @@ export interface StoredRecord {
   lockUntil: number
 }
 
-async function readJson<T>(path: string): Promise<{ value: T; etag: string } | null> {
+export async function readJson<T>(path: string): Promise<{ value: T; etag: string } | null> {
   // The ETag used for conditional writes must come from head() (store metadata), not from the
   // delivery response of get(). head() runs first: if a write lands in between, our ETag is stale
   // and the later ifMatch write fails safely instead of overwriting newer data.
@@ -108,4 +108,26 @@ export async function listHistory(): Promise<{ rev: number; at: number; size: nu
 
 export async function loadVersion(rev: number): Promise<Envelope | null> {
   return (await readJson<Envelope>(historyPath(rev)))?.value ?? null
+}
+
+/** Generic CAS write for small JSON documents other than the vault record. */
+export async function writeJson(path: string, value: unknown, etag: string | null): Promise<boolean> {
+  try {
+    await put(path, JSON.stringify(value), {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      cacheControlMaxAge: 60,
+      ...(etag ? { ifMatch: etag } : { allowOverwrite: false }),
+    })
+    return true
+  } catch (err) {
+    if (err instanceof BlobPreconditionFailedError) return false
+    if (!etag && err instanceof Error && /already exists/i.test(err.message)) return false
+    throw err
+  }
+}
+
+export async function removeJson(path: string): Promise<void> {
+  await del(path).catch(() => {})
 }

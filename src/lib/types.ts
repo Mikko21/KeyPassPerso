@@ -19,8 +19,20 @@ export interface Settings {
   clipboardClearSeconds: number
 }
 
+/** An AI agent allowed to use some entries through the MCP endpoint, without ever seeing them. */
+export interface AgentAccess {
+  id: string
+  name: string
+  token: string // kpa_… access token; lives only inside the encrypted vault and the connector config
+  entryIds: string[]
+  expiresAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
 export interface VaultData {
   entries: Entry[]
+  agents?: AgentAccess[]
   // Tombstones (id -> deletion timestamp) so deletions survive multi-device merges.
   deleted: Record<string, number>
   settings: Settings

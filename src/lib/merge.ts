@@ -1,4 +1,4 @@
-import type { Entry, VaultData } from './types'
+import type { AgentAccess, Entry, VaultData } from './types'
 
 /** Last-writer-wins merge per entry, with tombstones so deletions propagate across devices. */
 export function mergeVaults(local: VaultData, remote: VaultData): VaultData {
@@ -16,5 +16,12 @@ export function mergeVaults(local: VaultData, remote: VaultData): VaultData {
   const cutoff = Date.now() - 180 * 24 * 3600 * 1000
   for (const [id, ts] of Object.entries(deleted)) if (ts < cutoff) delete deleted[id]
 
-  return { entries, deleted, settings: local.settings }
+  const agentsById = new Map<string, AgentAccess>()
+  for (const a of [...(remote.agents ?? []), ...(local.agents ?? [])]) {
+    const prev = agentsById.get(a.id)
+    if (!prev || a.updatedAt > prev.updatedAt) agentsById.set(a.id, a)
+  }
+  const agents = [...agentsById.values()].filter((a) => !(deleted[a.id] && deleted[a.id] >= a.updatedAt))
+
+  return { entries, agents, deleted, settings: local.settings }
 }
