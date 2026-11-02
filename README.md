@@ -41,6 +41,8 @@ Permet à une routine IA (tâche planifiée claude.ai, agent…) de se connecter
 - Fonctionne avec les sites à formulaires classiques (ex. Active-Court / CK Sportcenter). Les connexions purement JavaScript,
   CAPTCHA ou SMS ne sont pas prises en charge.
 
+Guide pas à pas : [docs/GUIDE-ACCES-IA.md](docs/GUIDE-ACCES-IA.md).
+
 ## Développement
 
 ```bash
