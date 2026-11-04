@@ -256,6 +256,15 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </div>
         </Section>
 
+        <Section icon={<Bot className="size-4" />} title="Accès agents (IA)">
+          <p className="mb-4 text-sm leading-relaxed text-ink-300">
+            Laisse une routine IA se connecter à certains sites avec tes identifiants, sans jamais les voir. {vault.data?.agents?.length ? `${vault.data.agents.length} accès actif(s).` : ''}
+          </p>
+          <Button onClick={() => setSub('agents')}>
+            <Bot className="size-4" /> Gérer les accès agents
+          </Button>
+        </Section>
+
         <Section icon={<KeyRound className="size-4" />} title="Mot de passe maître">
           <form onSubmit={changePassword} className="space-y-4">
             <Field label="Actuel">
@@ -276,15 +285,6 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               {pwBusy && <Loader2 className="size-4 animate-spin" />} Changer le mot de passe
             </Button>
           </form>
-        </Section>
-
-        <Section icon={<Bot className="size-4" />} title="Accès agents (IA)">
-          <p className="mb-4 text-sm leading-relaxed text-ink-300">
-            Laisse une routine IA se connecter à certains sites avec tes identifiants, sans jamais les voir. {vault.data?.agents?.length ? `${vault.data.agents.length} accès actif(s).` : ''}
-          </p>
-          <Button onClick={() => setSub('agents')}>
-            <Bot className="size-4" /> Gérer les accès agents
-          </Button>
         </Section>
 
         <Section icon={<History className="size-4" />} title="Historique">
